@@ -23,8 +23,8 @@
  *
  * @method $page->first($parentID = null) 
  * @method $page->last($parentID = null)
- * @method $page->sort($index)
- * @method $page->move($index, $parentID = null)
+ * @method $page->sort($newIndex)
+ * @method $page->move($newIndex, $parentID = null)
  *
  */
 class PageSortMove extends WireData implements Module {

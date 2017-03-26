@@ -8,10 +8,10 @@ Module extends page API with capability to move/sort page
 
 | Name | Return | Summary | 
 |:--|:--|:--|
-| `$page->sort($newIndex)` | bool | Set a new sort index relative to the page parents. If the value is negative, the new index will be counted back from the total number of siblings.|
-| `$page->move($newIndex, $parentID = null)` | bool | Same as before but with capability to change the parent too. |
-| `$page->first($parentID = null)` | bool | Set page as first under its siblings.<br>`$page->sort == 0`<br>Optionally change the parent by adding the corresponding ID as a single parameter.<br><small>Can also be used as property:<br>`$page->first`</small> |
-| `$page->last($parentID = null)` | bool | Set page as last under its siblings.<br>`$page->sort == $page->parent->numChildren()`<br>Optionally change the parent by adding the corresponding ID as a single parameter.<br><small>Can also be used as property:<br>`$page->last`</small>  |
+| `$page->sort($newIndex)` | bool/ null | Set a new sort index relative to the page parents. If the value is negative, the new index will be counted back from the total number of siblings.|
+| `$page->move($newIndex, $parentID = null)` | bool/ null | Same as before but with capability to change the parent too. |
+| `$page->first($parentID = null)` | bool/ null | Set page as first under its siblings.<br>`$page->sort == 0`<br>Optionally change the parent by adding the corresponding ID as a single parameter.<br><small>Can also be used as property:<br>`$page->first`</small> |
+| `$page->last($parentID = null)` | bool/ null | Set page as last under its siblings.<br>`$page->sort == $page->parent->numChildren()`<br>Optionally change the parent by adding the corresponding ID as a single parameter.<br><small>Can also be used as property:<br>`$page->last`</small>  |
 
 ## Callable Functions
  
@@ -21,6 +21,11 @@ PageSortMove::execute($pageID, $newIndex = 0, $parentID = null);
 
 // INSTANCE
  $modules->get('PageSortMove')->execute($pageID, $newIndex = 0, $parentID = null);
+ 
+// RETURN  
+// NULL if nothing to change
+// TRUE in case of success
+// FALSE in case of failure
  ```
 
 ## License
