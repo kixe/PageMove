@@ -1,0 +1,241 @@
+<?php namespace ProcessWire;
+
+/**
+ * ProcessWire 'Page Sort and Move' module extends page API with capability to move/sort page
+ *
+ * @author kixe (Christoph Thelen) 2017/03/25
+ * @copyright 2017 Christoph Thelen
+ * @license Licensed under GNU/GPL v3
+ * @link https://processwire.com/talk/topic/...
+ * @version 1.0.0
+ * @since 1.0.50 init 2016/03/25
+ *
+ * ProcessWire 3.x, Copyright 2016 by Ryan Cramer
+ * https://processwire.com
+ *
+ * CALLABLE
+ * PageSortMove::execute($pageID, $newIndex = 0, $parentID = null);
+ * $modules->get('PageSortMove')->execute($pageID, $newIndex = 0, $parentID = null);
+ * 
+ * EXTENDED PAGE API
+ * @property $page->first // under same parent
+ * @property $page->last
+ *
+ * @method $page->first($parentID = null) 
+ * @method $page->last($parentID = null)
+ * @method $page->sort($index)
+ * @method $page->move($index, $parentID = null)
+ *
+ */
+class PageSortMove extends WireData implements Module {
+
+	/**
+	 *
+	 * @return array
+	 *
+	 */
+	public static function getModuleInfo() {
+
+		return array(
+
+			'title' => 'Page Sort and Move', 
+			'version' => 100, 
+			'summary' => 'Extends page API with capability to move/sort pages',
+			'href' => 'https://processwire.com',
+			'singular' => true, 
+			'autoload' => true, 
+			'icon' => 'list-ol'
+			);
+	}
+
+	private $newParent = false;
+
+	/**
+	 * Initialize, attach hooks 
+	 *
+	 */
+	public function init() {
+		$this->addHook('Page::move', $this, 'hookPageMove');
+		$this->addHook('Page::sort', $this, 'hookPageMove');
+
+		$this->addHook('Page::first', $this, 'hookPageMoveFirst');
+		$this->addHook('Page::last', $this, 'hookPageMoveLast');
+
+		$this->addHookProperty('Page::first', $this, 'hookPageMoveFirst');
+		$this->addHookProperty('Page::last', $this, 'hookPageMoveLast');
+	}
+
+	/**
+	 * 
+	 * @param HookEvent $event
+	 *
+	 */
+	public function hookPageSort(HookEvent $event) {
+		$pageID = $event->object->id;
+		$newIndex = $event->arguments(0);
+
+		$event->return = $this->execute($pageID, $newIndex);
+	}
+
+	/**
+	 * 
+	 * @param HookEvent $event
+	 *
+	 */
+	public function hookPageMove(HookEvent $event) {
+		$pageID = $event->object->id;
+		$newIndex = $event->arguments(0);
+		$parentID = count($event->arguments) == 2? $event->arguments(1): $event->object->parent_id;	
+
+		$event->return = $this->execute($pageID, $newIndex, $parentID);
+	}
+
+	/**
+	 * 
+	 * @param HookEvent $event
+	 *
+	 */
+	public function hookPageMoveFirst(HookEvent $event) {
+		$parentID = count($event->arguments)? $event->arguments(0): null;	
+		$pageID = $event->object->id;
+		$event->return = $this->execute($event->object->id, 0, $parentID);
+	}
+
+	/**
+	 *
+	 * @param HookEvent $event
+	 *
+	 */
+	public function hookPageMoveLast(HookEvent $event) {
+		$parentID = count($event->arguments)? $event->arguments(0): null;	
+		$pageID = $event->object->id;
+		$event->return = $this->execute($event->object->id, -1, $parentID);
+	}
+
+	/**
+	 * move/ sort a page 
+     * @param int $pageID
+     * @param int $newIndex (default 0: prepends the page to all other siblings)
+     * @param int $parentID (default: current parent)
+     * @return bool/ null 
+     * @throws Exception
+	 *
+	 */
+	public function execute($pageID, $newIndex = 0, $parentID = null) {
+		// sanitization
+		$pageID = (int) $pageID;
+		$parentID = $parentID? (int) $parentID: null;
+		$newIndex = (int) $newIndex;
+
+		// root page not sortable
+        if ($pageID == 1) throw new WireException('Rootpage is not sortable');
+
+        // get page
+        $page = wire('pages')->get("id=$pageID,include=all");
+        if (!$page) throw new WireException("Page with id=$pageID doesn't exist.");
+        if ($page->hasStatus('statusSystemID') || $page->hasStatus('statusSystem')) throw new WireException("You cannnot move system pages.");
+        if ($page->hasStatus('statusTrash')) throw new WireException("You cannnot move trashed pages.");
+
+        // get parent
+        $parent = !$parentID? $page->parent: wire('pages')->get("id=$parentID,include=all");
+        if (!$parent) throw new WireException("Page with id=$parent->id doesn't exist and can therefore not be used as a parent.");
+
+        // update parent
+        if ($parent->id != $page->parent->id) {
+        	if ($pageID == 2) throw new WireException("Changing the parent of $page->name (id=2) is not allowed.");
+        	self::updateParent($pageID, $parent->id);
+        }
+
+		// set new sort order
+		$sortArray = self::getPageSortArray($parent, $pageID, $newIndex);
+
+		// any changes?
+		if (!$sortArray) return null;
+		return self::updateSort($parent->id, $sortArray)? true: false;
+	}
+
+	 /**
+     * get array of page IDs (under same parent) indexed by updated sort
+     * @param object $parent future parent page object
+     * @param int $pageID
+     * @param int $sort
+     * 		0: prepend to all other siblings (default)
+     * 		-1 OR bigger/ equal than number of siblings (new page included): append	
+     * 		any negative value will place the item counting back from the end
+     *		example if you set sort to -5 under 6 siblings (new page included) sort will get the index 1
+     *
+     * @return array new Sort/ bool false if not changed
+     * @throws Exception
+     *
+     */
+    protected function getPageSortArray(Page $parent, $pageID, $sort = 0) {
+
+        // get sorted childrens ID array of future parent
+        $parentChildIDs = $parent->children('include=all,sort=sort')->each('id');
+
+        // get page.sort (array key) under parent (if current parent == future parent)
+        $currentSort = array_search($pageID, $parentChildIDs);
+
+        // quick exit if nothing has been changed
+        if ($sort === $currentSort) return;
+
+        // remove page id from array if under same parent
+        if ($currentSort !== false) unset($parentChildIDs[$currentSort]);
+
+        // rewriting sort
+        if ($sort < -1) {
+        	$sort = count($parentChildIDs) + $sort + 1; // plus one for the removed or not existing item
+        	if ($sort < 0) $sort = 0;
+        }
+        else if ($sort >= count($parentChildIDs)) $sort = -1;
+
+        // prepend
+        if ($sort == 0) array_unshift($parentChildIDs, $pageID);
+
+        // append 
+        else if ($sort == -1) $parentChildIDs[] = $pageID;
+
+        // place
+        else {
+            $lastPart = array_splice($parentChildIDs, $sort);
+            $parentChildIDs[] = $pageID;
+            $parentChildIDs = array_merge($parentChildIDs, $lastPart);
+        }
+
+        return $parentChildIDs;
+    }
+
+	/**
+     * update database table pages set new page parent
+     * @param int $pageID
+     * @param int $parentID
+     * @return bool
+     * @throws Exception
+     *
+     */
+	protected function updateParent($pageID, $parentID) {
+        $sql = "UPDATE pages SET parent_id = $parentID WHERE id = $pageID;";
+        $query = wire('database')->query($sql);
+        return $query? true : false;
+    }
+
+	/**
+     * create temporary mysql table from new sort array, update database table 'pages' column 'sort'
+     * @param int $parentID
+     * @param int $sortArray array of page IDs indexed by sort rank
+     * @return bool
+     * @throws Exception
+     *
+     */
+    protected function updateSort($parentID, Array $sortArray) {
+    	$sql = array();
+		$sql[] = "CREATE TEMPORARY TABLE temp_sort (id int(10) unsigned NOT NULL, sort int(11) NOT NULL AUTO_INCREMENT, PRIMARY KEY (sort));";
+        foreach ($sortArray as $pageId) $sql[] = "INSERT INTO temp_sort (id) VALUES($pageId);";
+        $sql[] = "UPDATE pages,temp_sort SET pages.sort = temp_sort.sort - 1 WHERE temp_sort.id = pages.id AND pages.parent_id = $parentID;";
+        $sql[] = "DROP TABLE temp_sort;";
+        $sql = implode("\n", $sql);
+
+        $query = wire('database')->query($sql);
+        return $query? true : false;
+    }
+}
