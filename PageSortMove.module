@@ -8,7 +8,8 @@
  * @license Licensed under GNU/GPL v3
  * @link https://processwire.com/talk/topic/...
  * @version 1.0.0
- * @since 1.0.50 init 2016/03/25
+ * @since 1.0.0 init - 2016/03/25
+ * @since 1.0.0 changed method/ property names: first -> moveFirst - 2016/03/27
  *
  * ProcessWire 3.x, Copyright 2016 by Ryan Cramer
  * https://processwire.com
@@ -18,11 +19,11 @@
  * $modules->get('PageSortMove')->execute($pageID, $newIndex = 0, $parentID = null);
  * 
  * EXTENDED PAGE API
- * @property $page->first // under same parent
- * @property $page->last
+ * @property $page->moveFirst // under same parent
+ * @property $page->moveLast
  *
- * @method $page->first($parentID = null) 
- * @method $page->last($parentID = null)
+ * @method $page->moveFirst($parentID = null) 
+ * @method $page->moveLast($parentID = null)
  * @method $page->sort($newIndex)
  * @method $page->move($newIndex, $parentID = null)
  *
@@ -39,7 +40,7 @@ class PageSortMove extends WireData implements Module {
 		return array(
 
 			'title' => 'Page Sort and Move', 
-			'version' => 100, 
+			'version' => 101, 
 			'summary' => 'Extends page API with capability to move/sort pages',
 			'href' => 'https://processwire.com',
 			'singular' => true, 
@@ -58,11 +59,11 @@ class PageSortMove extends WireData implements Module {
 		$this->addHook('Page::move', $this, 'hookPageMove');
 		$this->addHook('Page::sort', $this, 'hookPageMove');
 
-		$this->addHook('Page::first', $this, 'hookPageMoveFirst');
-		$this->addHook('Page::last', $this, 'hookPageMoveLast');
+		$this->addHook('Page::moveFirst', $this, 'hookPageMoveFirst');
+		$this->addHook('Page::moveLast', $this, 'hookPageMoveLast');
 
-		$this->addHookProperty('Page::first', $this, 'hookPageMoveFirst');
-		$this->addHookProperty('Page::last', $this, 'hookPageMoveLast');
+		$this->addHookProperty('Page::moveFirst', $this, 'hookPageMoveFirst');
+		$this->addHookProperty('Page::moveLast', $this, 'hookPageMoveLast');
 	}
 
 	/**
@@ -164,8 +165,7 @@ class PageSortMove extends WireData implements Module {
      * 		any negative value will place the item counting back from the end
      *		example if you set sort to -5 under 6 siblings (new page included) sort will get the index 1
      *
-     * @return array new Sort/ bool false if not changed
-     * @throws Exception
+     * @return array newSort/ bool false if not changed
      *
      */
     protected function getPageSortArray(Page $parent, $pageID, $sort = 0) {
@@ -184,7 +184,7 @@ class PageSortMove extends WireData implements Module {
 
         // rewriting sort
         if ($sort < -1) {
-        	$sort = count($parentChildIDs) + $sort + 1; // plus one for the removed or not existing item
+        	$sort = count($parentChildIDs) + $sort + 1; // + 1 for the removed or not existing item
         	if ($sort < 0) $sort = 0;
         }
         else if ($sort >= count($parentChildIDs)) $sort = -1;
@@ -230,7 +230,8 @@ class PageSortMove extends WireData implements Module {
     protected function updateSort($parentID, Array $sortArray) {
     	$sql = array();
 		$sql[] = "CREATE TEMPORARY TABLE temp_sort (id int(10) unsigned NOT NULL, sort int(11) NOT NULL AUTO_INCREMENT, PRIMARY KEY (sort));";
-        foreach ($sortArray as $pageId) $sql[] = "INSERT INTO temp_sort (id) VALUES($pageId);";
+		$values = implode('),(',$sortArray);
+        $sql[] = "INSERT INTO temp_sort (id) VALUES($values);";
         $sql[] = "UPDATE pages,temp_sort SET pages.sort = temp_sort.sort - 1 WHERE temp_sort.id = pages.id AND pages.parent_id = $parentID;";
         $sql[] = "DROP TABLE temp_sort;";
         $sql = implode("\n", $sql);
