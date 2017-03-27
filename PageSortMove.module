@@ -86,7 +86,7 @@ class PageSortMove extends WireData implements Module {
 	public function hookPageMove(HookEvent $event) {
 		$pageID = $event->object->id;
 		$newIndex = $event->arguments(0);
-		$parentID = count($event->arguments) == 2? $event->arguments(1): $event->object->parent_id;	
+		$parentID = count($event->arguments) == 2? $event->arguments(1) : $event->object->parent_id;	
 
 		$event->return = $this->execute($pageID, $newIndex, $parentID);
 	}
