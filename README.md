@@ -41,7 +41,7 @@ PageSortMove::execute($pageID, $newIndex = 0, $parentID = null);
 ## Coming soon 
 Change sort order based on page field or property. Expecting string parameter like 'id', 'modified' or 'mypagefield.id'. Optionally reverse order.
 ```
-$page->sortSiblings($sortSelectorValue, §rev = 0)
+$page->sortSiblings($sortSelectorValue, $rev = 0)
 $page->sortChildren($sortSelectorValue, $rev = 0)
 ```
 
