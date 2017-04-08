@@ -27,8 +27,8 @@
  *
  * @method $page->moveFirst($parent = null)
  * @method $page->moveLast($parent = null)
- * @method $page->moveForward($move = 1, $selector = 'all')
- * @method $page->moveBackwards($move = 1, $selector = 'all')
+ * @method $page->moveForward($steps = 1, $selector = 'all')
+ * @method $page->moveBackwards($steps = 1, $selector = 'all')
  *
  * @property $page->moveFirst // same parent
  * @property $page->moveLast
@@ -178,9 +178,9 @@ class PageMove extends WireData implements Module, ConfigurableModule {
 	public function hookPageMoveForward(HookEvent $event) {
 		if (substr($event->options['priority'],-1) != '0') return;
 		$page = $event->object;
-		$move = count($event->arguments)? '+'.$event->arguments(0) : '+1';
+		$steps = count($event->arguments)? '+'.$event->arguments(0) : '+1';
 		$selector = count($event->arguments) == 2? $event->arguments(0) : 'all';
-		$event->return = self::execute($page, null, $move, $selector);
+		$event->return = self::execute($page, null, $steps, $selector);
 	}
 
 	/**
@@ -193,9 +193,9 @@ class PageMove extends WireData implements Module, ConfigurableModule {
 		if (substr($event->options['priority'],-1) != '0') return;
 		var_dump($event->options['priority']);
 		$page = $event->object;
-		$move = count($event->arguments)? '-'.$event->arguments(0) : '-1';
+		$steps = count($event->arguments)? '-'.$event->arguments(0) : '-1';
 		$selector = count($event->arguments) == 2? $event->arguments(0) : 'all';
-		$event->return = self::execute($page, null, $move, $selector);
+		$event->return = self::execute($page, null, $steps, $selector);
 	}
 
 	/**
