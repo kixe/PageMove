@@ -5,9 +5,9 @@ Module extends page API with capability to move/ resort a page related to parent
 
 ## Current situation
   + Using `$page->sort` as a **setter** will not affect siblings. After using this call another sibling may have the same sort value.
-  + `page->index` doesn't work as a setter. `page->index` take in account only published, unhidden pages and therefore return unexpected results:  
+  + `page->index` doesn't work as a setter. `page->index` take in account only published, unhidden pages and therefore return **unexpected results**:  
 
-	_In the following example we get 3 pages with the same index (3)_
+	_In the following real example we get 3 pages with the same index (3)_
 	
 	```
 	$siblings = $page->siblings('include=all');
