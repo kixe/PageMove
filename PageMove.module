@@ -1,0 +1,414 @@
+<?php namespace ProcessWire;
+
+/**
+ * ProcessWire PageMove module extends page API with capability to move/ resort page
+ *
+ * @author kixe (Christoph Thelen) 2017/03/25
+ * @copyright 2017 Christoph Thelen
+ * @license Licensed under GNU/GPL v3
+ * @link https://processwire.com/talk/topic/15908-page-sorting-and-moving-via-api
+ * @version 1.0.3
+ * @since 1.0.0 init - 2016/03/25
+ * @since 1.0.1 changed method/ property names: first -> moveFirst - 2016/03/27
+ * @since 1.0.2 complete revision using core functions if possible, removed duplicates to core - 2016/04/03
+ * @since 1.0.3 added argument selector, changed modules name PageSortMove -> PageMove - 2016/04/05
+ *
+ * ProcessWire 3.x, Copyright 2016 by Ryan Cramer
+ * https://processwire.com
+ *
+ * CALLABLE (static & instance)
+ * PageMove::execute($page, $parent = null, $newIndex = 0, $selector = 'all');
+ * $modules->get('PageMove')->execute($page, $parent = null, $newIndex = 0, $selector = 'all');
+ *
+ * EXTENDED PAGE API
+ * @method $page->move($parent, $newIndex = null, $selector = 'all')
+ * @method $page->setIndex($newIndex, $selector = 'all') // set absolute index include=all
+ * @method $page->getIndex($selector = '') // same as $page->index without argument @see getSelector()
+ *
+ * @method $page->moveFirst($parent = null)
+ * @method $page->moveLast($parent = null)
+ * @method $page->moveForward($move = 1, $selector = 'all')
+ * @method $page->moveBackwards($move = 1, $selector = 'all')
+ *
+ * @property $page->moveFirst // same parent
+ * @property $page->moveLast
+ * @property $page->moveForward
+ * @property $page->moveBackwards
+ *
+ * EXTENDED PAGES API
+ * @method $pages->move($page, $parent = null, $newIndex = 0, $selector = 'all')
+ * @method $pages->resortChildren($page, $selectorValue)
+ *
+ * @todo hook function is calling twice if addHookProperty addHook have same name and calling the same function issue #232
+ * @see https://github.com/processwire/processwire-issues/issues/232
+ *
+ */
+class PageMove extends WireData implements Module, ConfigurableModule {
+
+	/**
+	 *
+	 * @return array
+	 *
+	 */
+	public static function getModuleInfo() {
+
+		return array(
+
+			'title' => 'Move and Resort Pages', 
+			'version' => 103, 
+			'summary' => 'Extends page and pages API with capability to move/ resort pages',
+			'href' => 'https://processwire.com/talk/topic/15908-page-sorting-and-moving-via-api',
+			'singular' => true, 
+			'autoload' => true, 
+			'icon' => 'list-ol'
+			);
+	}
+
+	/**
+	 * maximum allowed number of siblings resortable by selector
+	 * @see function hookPagesResortChildren()
+	 *
+	 */
+	private $maxRC;
+
+	static public function getDefaultConfig() {
+		return array(
+			'maxRC' => 1000,
+			'test' => null
+		);
+	}
+
+	public function __construct() {
+		foreach(self::getDefaultConfig() as $key => $value) {
+			$this->$key = $value;
+		}
+	}
+
+	/**
+	 * Initialize, attach hooks 
+	 *
+	 */
+	public function init() {
+		$this->addHook('Page::move', $this, 'hookPageMove');
+		$this->addHook('Page::setIndex', $this, 'hookPageSetIndex');
+		$this->addHook('Page::getIndex', $this, 'hookPageGetIndex');
+
+		$this->addHook('Page::moveFirst', $this, 'hookPageMoveFirst');
+		$this->addHook('Page::moveLast', $this, 'hookPageMoveLast');
+		$this->addHook('Page::moveForward', $this, 'hookPageMoveForward');
+		$this->addHook('Page::moveBackwards', $this, 'hookPageMoveBackwards');
+
+		$this->addHookProperty('Page::moveFirst', $this, 'hookPageMoveFirst');
+		$this->addHookProperty('Page::moveLast', $this, 'hookPageMoveLast');
+		$this->addHookProperty('Page::moveForward', $this, 'hookPageMoveForward');
+		$this->addHookProperty('Page::moveBackwards', $this, 'hookPageMoveBackwards');
+
+		$this->addHook('Pages::move', $this, 'hookPagesMove');
+		$this->addHook('Pages::resortChildren', $this, 'hookPagesResortChildren');	
+	}
+
+	/**
+	 * 
+	 * @param HookEvent $event
+	 *
+	 */
+	public function hookPageMove(HookEvent $event) {
+		$page = $event->object;
+		$parent = $event->arguments(0);
+		$newIndex = count($event->arguments) >= 2? (int) $event->arguments(1) : null;
+		$selector = count($event->arguments) == 3? $event->arguments(2) : '';
+		$event->return = self::execute($page, $parent, $newIndex, $selector);
+	}
+
+	/**
+	 * 
+	 * @param HookEvent $event
+	 *
+	 */
+	public function hookPageSetIndex(HookEvent $event) {
+		$page = $event->object;
+		$newIndex = $event->arguments(0);
+		$selector = count($event->arguments) == 2? $event->arguments(1) : '';
+		$event->return = self::execute($page, null, $newIndex, $selector);
+	}
+
+	/**
+	 * 
+	 * @param HookEvent $event
+	 *
+	 */
+	public function hookPageGetIndex(HookEvent $event) {
+		$page = $event->object;
+		$selector = count($event->arguments)? $event->arguments(0) : '';
+		$event->return = self::getIndex($page, $selector);
+	}
+
+	/**
+	 * 
+	 * @param HookEvent $event
+	 * @see @todo
+	 *
+	 */
+	public function hookPageMoveFirst(HookEvent $event) {
+		if (substr($event->options['priority'],-1) != '0') return;
+		$parent = $event->arguments? $event->arguments(0): null;	
+		$page = $event->object;
+		$event->return = self::execute($page, $parent, 0);
+	}
+
+	/**
+	 *
+	 * @param HookEvent $event
+	 * @see @todo
+	 *
+	 */
+	public function hookPageMoveLast(HookEvent $event) {
+		if (substr($event->options['priority'],-1) != '0') return;
+		$parent = count($event->arguments)? $event->arguments(0): null;	
+		$page = $event->object;
+		$event->return = self::execute($page, $parent, -1);
+	}
+
+	/**
+	 *
+	 * @param HookEvent $event
+	 * @see @todo
+	 *
+	 */
+	public function hookPageMoveForward(HookEvent $event) {
+		if (substr($event->options['priority'],-1) != '0') return;
+		$page = $event->object;
+		$move = count($event->arguments)? '+'.$event->arguments(0) : '+1';
+		$selector = count($event->arguments) == 2? $event->arguments(0) : 'all';
+		$event->return = self::execute($page, null, $move, $selector);
+	}
+
+	/**
+	 *
+	 * @param HookEvent $event
+	 * @see @todo
+	 *
+	 */
+	public function hookPageMoveBackwards(HookEvent $event) {
+		if (substr($event->options['priority'],-1) != '0') return;
+		var_dump($event->options['priority']);
+		$page = $event->object;
+		$move = count($event->arguments)? '-'.$event->arguments(0) : '-1';
+		$selector = count($event->arguments) == 2? $event->arguments(0) : 'all';
+		$event->return = self::execute($page, null, $move, $selector);
+	}
+
+	/**
+	 *
+	 * @param HookEvent $event
+	 *
+	 */
+	public function hookPagesMove(HookEvent $event) {
+		$page = $event->arguments(0);
+		$parent = null;
+		$newIndex = $event->arguments(1);
+		if (count($event->arguments) >= 3) {
+			$parent = $event->arguments(1);
+			$newIndex = $event->arguments(2);
+		} 
+		$selector = count($event->arguments) == 4? $selector : '';
+		$event->return = self::execute($page, $parent, $newIndex, $selector);
+	}
+
+	/**
+	 * resort all siblings corresponding to a selector
+	 * @param HookEvent $event
+	 * @throws Exception if maximum allowed number of siblings exceeded @see module settings
+	 *
+	 */
+	public function hookPagesResortChildren(HookEvent $event) {
+		 $parent = $event->arguments(0);
+		 if ($parent->numChildren > $this->maxRC) throw new WireException("Maximum number ($this->maxRC) of sortable siblings ($parent->numChildren) exceeded");
+		 $sortSelectorValue = $this->wire('sanitizer')->selectorValue($event->arguments(1));
+		 $newSortArray = $this->getChildrenSortArray($parent, $sortSelectorValue);
+		 $event->return = $this->updateSort($parent->id, $newSortArray);
+	}
+
+	/**
+	 * get the current index related to siblings defined by selector
+	 * return null if the item is excluded (due to specified selector)
+     * @param object $page
+     * @param int/string $selector @see getSelector()
+     * @return int/ null
+	 *
+	 */
+	public function getIndex(Page $page, $selector = '') {
+		$siblings = $page->siblings('sort=sort,'.self::getSelector($selector));
+		return $siblings->getItemKey($page);
+	}
+
+	/**
+	 * get selectorString
+     * @param int/string $selector ('hidden', 'all', 'unpublished', 'trash') as value for 'include' OR any int as value for 'status'
+     * @return selectorString
+     * @throws Exception
+	 *
+	 */
+	protected function getSelector($selector = '') {
+		if (!$selector) return '';
+		if (is_int($selector)) return "status=$selector";
+		$selector = $this->wire('sanitizer')->selectorValue($selector);
+		if (!in_array($selector, array('hidden', 'all', 'unpublished', 'trash'))) throw new WireException("Unallowed selector value. Use: 'hidden', 'all', 'unpublished', 'trash' or leave empty");
+		return "include=all";
+	}
+
+	/**
+	 * move/ sort a page update parent page
+     * @param object $page
+     * @param object $parent (default: current parent)
+     * @param int/string $newIndex (default 0: prepends the page to all other siblings)	
+     * @param int/string $selector @see getSelector()		 
+     * @return bool/ null/ int
+     *
+     * null: nothing has been changed
+     * int parentID: parent changed, index/ sort not
+     * bool true: index changed, parent changed maybe
+     * bool false: index change failed, parent changed maybe
+	 *
+     * @throws Exception
+	 *
+	 */
+	public function execute($page, $parent = null, $newIndex = 0, $selector = 'all') {
+
+		$return = null;
+
+		// validation
+		if (false === $page instanceof Page || true === $page instanceof NullPage) throw new WireException('Expecting Page object as 1st argument');
+
+		// exclusions
+		if ($page->id == 1) throw new WireException('Rootpage is not moveable');
+		// if ($page->id == 2) throw new WireException("Changing the parent of $page->name (id=2) is not allowed.");
+		if ($page->hasStatus('statusSystemID') || $page->hasStatus('statusSystem')) throw new WireException("You cannnot move system pages");
+		if ($page->hasStatus('statusTrash')) throw new WireException("You cannnot move trashed pages. Restore before moving");
+
+		if (is_int($parent) && $newIndex === 0) $newIndex = $parent;
+
+		// set parent
+		else if ($parent !== null) {
+			if (false === $parent instanceof Page || true === $parent instanceof NullPage) throw new WireException('Expecting Page object as 2nd argument');
+			if ($parent !== $page->parent) {
+				$page->of(false);
+				$page->setParent($parent);
+				if ($page->save()) $return = $page->parent->id;
+			}
+		}
+
+		// set/ sanitize index
+		if ($newIndex === null) return $return; // return null OR new. parentID
+		$siblings = $page->siblings(self::getSelector($selector));
+		$currentIndex = $siblings->getItemKey($page);
+		// if ($currentIndex === null) return $return; // page is excluded by selector, return null OR new. parentID
+		if ($currentIndex === null) throw new WireException("Index couldn't be changed. Page is excluded from its siblings by selector");
+
+		if (strpos($newIndex,'+') === 0) $newIndex = $currentIndex + (int) substr($newIndex, 1); // hookPageMoveForward()
+		else if (is_string($newIndex) && strpos($newIndex,'-') === 0) $newIndex = $currentIndex - (int) substr($newIndex, 1); // hookPageMoveBackwards()
+	
+		else if (is_int($newIndex) && $newIndex < 0) $newIndex = $siblings->count + $newIndex; // count back from the end
+		else $newIndex = (int) $newIndex;
+
+		// nothing to change
+		if ($currentIndex == 0 && $newIndex <= 0) return $return; // stay first
+		if ($newIndex >= $siblings->count && $currentIndex + 1 == $siblings->count) return $return; // stay last
+		if ($newIndex === $currentIndex) return $return; // stay in-between
+
+		// set sort
+		if ($newIndex <= 0) $sort = 0;
+		else if ($currentIndex < $siblings->count) $sort = $siblings->eq($newIndex)->sort;
+		else $sort = $siblings->last()->sort;
+		if ($sort == $page->sort) return $return;
+
+		// push down item to be replaced if index move forward
+		$after = $newIndex > $currentIndex? true : false;
+
+		// return
+		$return = PagesEditor::sortPage($page, $sort, $after);
+		return $return? true: false;
+	}
+
+	/**
+     * update page set new page parent
+     * @param object $page
+     * @param object $parent
+     * @return int new parentID (index won't be changed)
+     * @throws Exception
+     *
+     */
+	protected function updateParent($page, $parent) {
+        return self::execute($page, $parent, null);
+    }
+
+	/**
+     * get array of page IDs (under same parent) indexed by updated sort
+     * @param object $page page object
+     * @param int $sortSelectorValue
+     * @return indexed array of page IDs
+     *
+     */
+    protected function getChildrenSortArray(Page $page, $sortSelectorValue) {
+    	return $page->children("include=all,sort=$sortSelectorValue")->each('id');
+    }
+
+	/**
+     * create temporary mysql table from new sort array, update database table 'pages' column 'sort'
+     * combination of PagesEditor::sort() PagesEditor::sortRebuild()
+     * @param int $parentID
+     * @param int $sortArray array of page IDs indexed by sort rank
+     * @return bool
+     * @throws Exception
+     * @see PagesEditor::sort() PagesEditor::sortRebuild() 
+     *
+     */
+    protected function updateSort($parentID, Array $sortArray) {
+
+    	$sql = array();
+		$sql[] = "CREATE TEMPORARY TABLE temp_sort (id int(10) unsigned NOT NULL, sort int(11) NOT NULL AUTO_INCREMENT, PRIMARY KEY (sort));";
+		$values = implode('),(',$sortArray);
+        $sql[] = "INSERT INTO temp_sort (id) VALUES($values);";
+        $sql[] = "UPDATE pages,temp_sort SET pages.sort = temp_sort.sort - 1 WHERE temp_sort.id = pages.id AND pages.parent_id = $parentID;";
+        $sql[] = "DROP TABLE temp_sort;";
+        $sql = implode("\n", $sql);
+
+    	$database = $this->wire('database');
+	    $query = $database->prepare($sql);
+	    return $query->execute();
+    }
+
+	/**
+	 * module settings
+	 *
+	 */
+	static public function getModuleConfigInputfields(array $data) {
+		
+		$fields = new InputfieldWrapper();
+		$defaults = self::getDefaultConfig();
+		$data = array_merge($defaults, $data);
+
+		$f = wire('modules')->get('InputfieldInteger'); 
+		$f->attr('name', 'maxRC'); 
+		$f->attr('min', 1); 
+		$f->attr('type', 'number'); 
+		$f->attr('value', $data['maxRC']); 
+		$f->icon = 'life-ring'; 
+		$f->label = __('Limit Number of Resortable Children');
+		$f->entityEncodeText = false;
+		$f->description =  __('Maximum allowed number of siblings allowed to run <code>$pages->resortChildren()</code><br>Module will throw Exception if exceeded. Set carefully because each sibling will be updated in the database.');
+		$fields->add($f);
+
+		$f = wire('modules')->get('InputfieldAsmSelect');
+		$f->attr('name', 'test');
+		$f->label = "Test";
+		$f->addOption('');
+		$f->addOption(0, 'Zero');
+		$f->addOption(1, 'One');
+		$f->addOption(2, 'Two');
+		$f->attr('value', $data['test']); 	
+		$fields->add($f);
+
+		return $fields;
+	}
+}
